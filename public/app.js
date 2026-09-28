@@ -1,41 +1,45 @@
 import { siteConfig } from "./config.js";
 
-const year = document.querySelector("#year");
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+
+const year = $("#year");
 if (year) year.textContent = new Date().getFullYear();
-const editionDate = document.querySelector("#edition-date");
+
+const editionDate = $("#edition-date");
 if (editionDate) {
   editionDate.textContent = new Intl.DateTimeFormat("pt-BR", {
     weekday: "long", day: "2-digit", month: "long", year: "numeric"
   }).format(new Date());
 }
 
-const menuButton = document.querySelector(".menu-button");
-const mainNav = document.querySelector("#main-nav");
+const menuButton = $(".menu-button");
+const mainNav = $("#main-nav");
 menuButton?.addEventListener("click", () => {
-  const open = mainNav.classList.toggle("open");
+  const open = mainNav?.classList.toggle("open") ?? false;
   menuButton.setAttribute("aria-expanded", String(open));
 });
 
-document.querySelectorAll("#main-nav a").forEach((link) => {
+$$("#main-nav a").forEach((link) => {
   link.addEventListener("click", () => {
-    mainNav.classList.remove("open");
+    mainNav?.classList.remove("open");
     menuButton?.setAttribute("aria-expanded", "false");
   });
 });
 
-const newsletterForm = document.querySelector("#newsletter-form");
+const newsletterForm = $("#newsletter-form");
 newsletterForm?.addEventListener("submit", (event) => {
   event.preventDefault();
-  const feedback = document.querySelector("#newsletter-feedback");
+  const feedback = $("#newsletter-feedback");
   if (feedback) feedback.textContent = "Obrigado. A lista de leitura será ativada em breve.";
   newsletterForm.reset();
 });
 
-const grid = document.querySelector("#news-grid");
-const emptyState = document.querySelector("#hub-empty");
-const hubLabel = document.querySelector("[data-hub-label]");
-const hubStatus = document.querySelector("[data-hub-state]");
-const retryButton = document.querySelector("#hub-retry");
+const grid = $("#news-grid");
+const latest = $(".latest");
+const sectionHeading = $(".latest .section-heading");
+const hubLabel = $("[data-hub-label]");
+const hubStatus = $("[data-hub-state]");
 
 const escapeHtml = (value = "") => String(value).replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -57,44 +61,216 @@ const articleList = (payload) => {
   return [];
 };
 
-const articleCard = (article, index) => {
-  const title = article.title || article.headline || article.name || "Matéria da redação";
-  const description = article.description || article.excerpt || article.summary || "Leia a matéria completa no site de origem.";
-  const category = article.category || article.section || "Barra";
-  const date = article.published_at || article.publishedAt || article.created_at;
-  const formattedDate = date ? new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" }).format(new Date(date)) : "Atualizado agora";
-  const href = safeUrl(article.canonical_url || article.article_url || article.source_url || article.url || "#");
-  const image = article.image_url || article.image || "";
-  const imageMarkup = image ? `<img src="${escapeHtml(safeUrl(image))}" alt="" loading="lazy" />` : "";
+const titleOf = (article) => article.title || article.headline || article.name || "Matéria da redação";
+const descriptionOf = (article) => article.description || article.excerpt || article.summary || "Leia a matéria completa no Correio da Manhã.";
+const categoryOf = (article) => article.category || article.section || siteConfig.defaultCategory || "Atualidades";
+const dateOf = (article) => article.published_at || article.publishedAt || article.created_at || article.updated_at;
+const hrefOf = (article) => safeUrl(article.canonical_url || article.article_url || article.source_url || article.url || "#");
+const imageOf = (article) => article.image_url || article.image || "";
+
+const formattedDate = (date) => {
+  if (!date) return "Atualizado agora";
+  const parsed = new Date(date);
+  return Number.isNaN(parsed.getTime())
+    ? "Atualizado agora"
+    : new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" }).format(parsed);
+};
+
+const articleCard = (article, index = 0) => {
+  const image = imageOf(article);
+  const imageMarkup = image
+    ? `<img src="${escapeHtml(safeUrl(image))}" alt="" loading="lazy" />`
+    : "";
   return `<article class="news-card hub-card ${index === 0 ? "featured-card" : ""}">
-    ${imageMarkup}<p class="eyebrow">${escapeHtml(category)}</p>
-    <h3><a href="${escapeHtml(href)}" target="_blank" rel="noopener">${escapeHtml(title)}</a></h3>
-    <p>${escapeHtml(description)}</p><span class="card-meta">${escapeHtml(formattedDate)}</span>
+    ${imageMarkup}
+    <p class="eyebrow">${escapeHtml(categoryOf(article))}</p>
+    <h3><a href="${escapeHtml(hrefOf(article))}" target="_blank" rel="noopener">${escapeHtml(titleOf(article))}</a></h3>
+    <p>${escapeHtml(descriptionOf(article))}</p>
+    <span class="card-meta">${escapeHtml(formattedDate(dateOf(article)))}</span>
+    <span class="article-source">Correio da Manhã</span>
   </article>`;
 };
 
-async function loadHubNews() {
+const sectionCard = (article) => {
+  const image = imageOf(article);
+  const imageMarkup = image
+    ? `<img src="${escapeHtml(safeUrl(image))}" alt="" loading="lazy" />`
+    : "";
+  return `<article class="section-card">
+    ${imageMarkup}
+    <div>
+      <p class="eyebrow">${escapeHtml(categoryOf(article))}</p>
+      <h3><a href="${escapeHtml(hrefOf(article))}" target="_blank" rel="noopener">${escapeHtml(titleOf(article))}</a></h3>
+      <p>${escapeHtml(formattedDate(dateOf(article)))}</p>
+    </div>
+  </article>`;
+};
+
+let hubArticles = [];
+let activeCategory = "all";
+let refreshTimer;
+
+const updateStatus = (label, loading = false) => {
+  if (hubLabel) hubLabel.textContent = label;
+  hubStatus?.classList.toggle("is-loading", loading);
+};
+
+const ensureHubControls = () => {
+  if (!grid || !latest) return;
+
+  const status = $("[data-hub-state]");
+  if (status && !$("#hub-refresh")) {
+    const tools = document.createElement("div");
+    tools.className = "latest-tools";
+    status.replaceWith(tools);
+    tools.append(status);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "refresh-button";
+    button.id = "hub-refresh";
+    button.textContent = "Atualizar";
+    tools.append(button);
+  }
+
+  if (!$("#category-filter")) {
+    const filter = document.createElement("div");
+    filter.className = "category-filter";
+    filter.id = "category-filter";
+    filter.setAttribute("role", "tablist");
+    filter.setAttribute("aria-label", "Filtrar notícias");
+    grid.before(filter);
+  }
+
+  if (!$("#hub-empty")) {
+    const empty = document.createElement("div");
+    empty.className = "hub-empty";
+    empty.id = "hub-empty";
+    empty.hidden = true;
+    empty.innerHTML = '<p>Nenhuma matéria do Hub apareceu ainda.</p><button type="button" id="hub-retry" class="outline-button">Tentar novamente</button>';
+    grid.after(empty);
+  }
+
+  if (!$("#category-sections")) {
+    const sections = document.createElement("section");
+    sections.className = "hub-sections wrap";
+    sections.id = "editorias";
+    sections.innerHTML = '<div class="section-heading editorial-heading"><div><p class="kicker">LEITURA POR EDITORIA</p><h2>Os assuntos em movimento</h2></div><p class="section-heading-note">Conteúdo atualizado pelo Correio da Manhã.</p></div><div id="category-sections" class="category-sections"></div>';
+    latest.after(sections);
+  }
+
+  $("#hub-refresh")?.addEventListener("click", () => loadHubNews());
+  $("#hub-retry")?.addEventListener("click", () => loadHubNews());
+};
+
+const renderFilters = () => {
+  const filter = $("#category-filter");
+  if (!filter) return;
+  const categories = [...new Set(hubArticles.map(categoryOf).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "pt-BR"));
+  filter.innerHTML = [
+    { label: "Todas", value: "all" },
+    ...categories.map((category) => ({ label: category, value: category.toLowerCase() }))
+  ].map(({ label, value }) => `<button type="button" class="filter-chip ${value === activeCategory ? "active" : ""}" data-category="${escapeHtml(value)}" role="tab" aria-selected="${value === activeCategory}">${escapeHtml(label)}</button>`).join("");
+  $$("[data-category]", filter).forEach((button) => {
+    button.addEventListener("click", () => {
+      activeCategory = button.dataset.category || "all";
+      renderFilters();
+      renderGrid();
+    });
+  });
+};
+
+const renderGrid = () => {
+  if (!grid) return;
+  const articles = (activeCategory === "all"
+    ? hubArticles
+    : hubArticles.filter((article) => categoryOf(article).toLowerCase() === activeCategory)
+  ).slice(0, siteConfig.maxArticles || 12);
+  grid.innerHTML = articles.map(articleCard).join("");
+  const empty = $("#hub-empty");
+  if (empty) empty.hidden = articles.length > 0;
+};
+
+const renderSections = () => {
+  const container = $("#category-sections");
+  if (!container) return;
+  const categories = [...new Set(hubArticles.map(categoryOf).filter(Boolean))].slice(0, 4);
+  container.innerHTML = categories.map((category) => {
+    const articles = hubArticles.filter((article) => categoryOf(article) === category).slice(0, 4);
+    return `<section class="category-section">
+      <div class="category-section-heading"><span class="eyebrow">${escapeHtml(category)}</span><span class="category-count">${articles.length} matérias</span></div>
+      <div class="category-section-grid">${articles.map(sectionCard).join("")}</div>
+    </section>`;
+  }).join("");
+};
+
+const updateHero = () => {
+  const [lead, ...briefArticles] = hubArticles;
+  if (!lead) return;
+  const heroImage = $(".hero-photo img, .stage-photo img");
+  const heroLabel = $(".hero-photo span, .stage-tag");
+  const heroTitle = $(".hero-copy h2, .stage-copy h2");
+  const heroSummary = $(".hero-copy > p:not(.eyebrow), .stage-copy > p:not(.eyebrow)");
+  const heroLink = $(".hero-copy .text-link, .stage-copy .text-link");
+
+  if (heroImage && imageOf(lead)) {
+    heroImage.src = safeUrl(imageOf(lead));
+    heroImage.alt = titleOf(lead);
+  }
+  if (heroLabel) heroLabel.textContent = categoryOf(lead);
+  if (heroTitle) heroTitle.textContent = titleOf(lead);
+  if (heroSummary) heroSummary.textContent = descriptionOf(lead);
+  if (heroLink) {
+    heroLink.href = hrefOf(lead);
+    heroLink.target = "_blank";
+    heroLink.rel = "noopener";
+    heroLink.innerHTML = 'Ler no Correio da Manhã <span aria-hidden="true">↗</span>';
+  }
+
+  $$(".latest ~ .hub-sections").length;
+  briefArticles.slice(0, 3).forEach((article, index) => {
+    const card = $$(".news-card:not(.hub-card)")[index];
+    if (!card) return;
+    const heading = $("h3", card);
+    const eyebrow = $(".eyebrow", card);
+    const meta = $(".card-meta", card);
+    if (heading) heading.innerHTML = `<a href="${escapeHtml(hrefOf(article))}" target="_blank" rel="noopener">${escapeHtml(titleOf(article))}</a>`;
+    if (eyebrow) eyebrow.textContent = categoryOf(article);
+    if (meta) meta.textContent = `Correio da Manhã · ${formattedDate(dateOf(article))}`;
+  });
+};
+
+async function loadHubNews({ quiet = false } = {}) {
   if (!siteConfig.hubEnabled || !grid) return;
-  hubLabel.textContent = "Buscando atualização";
-  hubStatus?.classList.add("is-loading");
+  updateStatus("Buscando atualização", true);
   const url = new URL(siteConfig.hubEndpoint, siteConfig.hubOrigin);
   url.searchParams.set("domain", siteConfig.domain);
   url.searchParams.set("refresh", String(Date.now()));
+
   try {
     const response = await fetch(url, { cache: "no-store", headers: { Accept: "application/json" } });
     if (!response.ok) throw new Error(`Hub respondeu ${response.status}`);
-    const articles = articleList(await response.json()).filter(Boolean).slice(0, 6);
-    if (!articles.length) throw new Error("Nenhuma matéria disponível");
-    grid.innerHTML = articles.map(articleCard).join("");
-    emptyState.hidden = true;
-    hubLabel.textContent = "Atualizado pelo Hub";
+    const articles = articleList(await response.json()).filter(Boolean);
+    if (!articles.length) {
+      updateStatus("Hub conectado, aguardando matérias");
+      return;
+    }
+    hubArticles = articles;
+    activeCategory = "all";
+    renderFilters();
+    renderGrid();
+    renderSections();
+    updateHero();
+    updateStatus(`Atualizado pelo Hub · ${articles.length} matérias`);
   } catch (error) {
     console.warn("Não foi possível atualizar pelo Content Hub:", error);
-    hubLabel.textContent = "Edição de estreia";
+    updateStatus("Edição local · Hub indisponível");
   } finally {
     hubStatus?.classList.remove("is-loading");
   }
 }
 
-retryButton?.addEventListener("click", loadHubNews);
+ensureHubControls();
 loadHubNews();
+refreshTimer = window.setInterval(() => loadHubNews({ quiet: true }), siteConfig.refreshIntervalMs || 300000);
+window.addEventListener("focus", () => loadHubNews({ quiet: true }));
