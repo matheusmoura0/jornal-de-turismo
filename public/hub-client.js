@@ -40,7 +40,7 @@ export function saveHubArticles(domain, articles) {
   }
 }
 
-export async function requestHubArticles({ retries = 1, timeoutMs = 8000 } = {}) {
+export async function requestHubArticles({ retries = 1, timeoutMs = 10000 } = {}) {
   let lastError;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     const controller = new AbortController();
