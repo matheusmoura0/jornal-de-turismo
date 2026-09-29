@@ -262,7 +262,7 @@ function loadHubNews({ quiet = false } = {}) {
 
   hubRequest = (async () => {
     try {
-      const result = await requestHubArticles({ retries: 1, timeoutMs: 8000 });
+      const result = await requestHubArticles({ retries: 1, timeoutMs: 10000 });
       const articles = result.articles;
       if (!articles.length) {
         updateStatus(hubArticles.length
