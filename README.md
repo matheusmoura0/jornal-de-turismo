@@ -1,6 +1,6 @@
 # Jornal de Turismo
 
-Site editorial estático para `jornaldeturismo.tur.br`, com foco em viagens, hospitalidade e aviação e preparado para receber matérias do Correio Content Hub.
+Site editorial estático para `jornaldeturismo.rio.br`, com foco em viagens, hospitalidade e aviação e preparado para receber matérias do Correio Content Hub.
 
 ## Cloudflare Pages
 
