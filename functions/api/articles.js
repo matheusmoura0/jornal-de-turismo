@@ -40,7 +40,7 @@ export async function onRequestGet({ request }) {
   const upstreamUrl = new URL(HUB_URL);
   upstreamUrl.searchParams.set("domain", SITE_DOMAIN);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  const timeout = setTimeout(() => controller.abort(), 7000);
 
   try {
     const upstream = await fetch(upstreamUrl, {
@@ -49,7 +49,6 @@ export async function onRequestGet({ request }) {
     });
     if (!upstream.ok) throw new Error(`CM Hub respondeu ${upstream.status}`);
     const payload = await upstream.json();
-    const body = JSON.stringify(payload);
     const response = json(payload, 200, "hub", `public, max-age=${FRESH_TTL_SECONDS}`);
 
     if (edgeCache) {
